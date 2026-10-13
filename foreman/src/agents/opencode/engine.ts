@@ -1,6 +1,8 @@
 // OpenCode engine using the @opencode-ai/sdk v2.
 import path from 'node:path';
-import { createOpencode, createOpencodeClient } from '@opencode-ai/sdk/v2';
+import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk/v2";
+import { spawn } from "node:child_process";
+import { findOpenCode } from "./find.js";
 import type { OpenCodeConfig } from '../../config.js';
 import type { Foreman } from '../../foreman.js';
 import type { AuthCheck, Engine, Role, TurnSpec, TurnStats } from '../engine.js';
@@ -24,9 +26,28 @@ export class OpenCodeEngine implements Engine {
 
   async checkAuth(): Promise<AuthCheck> {
     try {
-      const oc = await createOpencode({ timeout: 15000 });
-      oc.server.close();
-      return { ok: true, account: 'opencode' };
+      const bin = findOpenCode(this.cfg.path) ?? '/home/ciborg/.opencode/bin/opencode';
+      const proc = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', '0'], {
+        env: { ...process.env, OPENCODE_CONFIG_CONTENT: '{}' },
+      });
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          try { proc.kill('SIGTERM'); } catch {}
+          resolve({ ok: false, message: 'Timeout waiting for server to start after 15000ms' });
+        }, 15000);
+        proc.stdout?.on('data', (d) => {
+          const str = d.toString();
+          if (str.includes('listening')) {
+            clearTimeout(timeout);
+            try { proc.kill('SIGTERM'); } catch {}
+            resolve({ ok: true, account: 'opencode' });
+          }
+        });
+        proc.on('error', (err) => {
+          clearTimeout(timeout);
+          resolve({ ok: false, message: err.message });
+        });
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return { ok: false, message: `OpenCode check failed: ${msg}` };
