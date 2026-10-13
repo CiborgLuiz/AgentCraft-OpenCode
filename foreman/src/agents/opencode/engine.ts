@@ -58,7 +58,10 @@ export class OpenCodeEngine implements Engine {
     const stats: TurnStats = { isError: false, errors: [] };
     try {
       const oc = await createOpencode({ timeout: 60000 });
-      const client = createOpencodeClient({ baseUrl: oc.server.url });
+      const client = createOpencodeClient({ baseUrl: oc.server.url, headers: (oc as any).server?.password ? { 'x-opencode-password': (oc as any).server.password, authorization: `Bearer ${(oc as any).server.password}` } : {} });
+      // also try setting token
+      try { (client as any).client?.setConfig?.({ ...(client as any).client?.getConfig?.(), headers: { ...((client as any).client?.getConfig?.().headers||{}), 'x-opencode-password': (oc as any).server?.password } }); } catch {}
+
 
       // Create session
       const res = await client.v2.session.create({
@@ -73,17 +76,18 @@ export class OpenCodeEngine implements Engine {
         })() : undefined,
       });
 
-      if (res.error) {
+      if ((res as any)?.error) {
         oc.server.close();
         stats.isError = true;
-        stats.errors.push(String(res.error));
+        stats.errors.push(res.error instanceof Error ? res.error.message : (typeof res.error === 'object' ? JSON.stringify(res.error) : String(res.error)));
         return stats;
       }
 
-      const sessionID = res.data.data.id;
+      const sessionID = (res as any).data?.data?.id || (res as any).data?.id;
       spec.onSession(sessionID);
-      if (res.data.data.model) {
-        spec.onModel?.(`${res.data.data.model.providerID}/${res.data.data.model.id}`);
+      const modelInfo = (res as any).data?.data?.model || (res as any).data?.model;
+      if (modelInfo) {
+        spec.onModel?.(`${modelInfo.providerID}/${modelInfo.id}`);
       }
 
       // Send prompt
@@ -101,7 +105,7 @@ export class OpenCodeEngine implements Engine {
           const ev = event as any;
           if (ev?.type === 'session.error') {
             stats.isError = true;
-            stats.errors.push(ev.properties?.message || 'unknown error');
+            const em = ev.properties?.message || (ev.properties ? JSON.stringify(ev.properties) : 'unknown error'); stats.errors.push(em);
           }
         }
       } catch (e) {
