@@ -57,7 +57,7 @@ export class OpenCodeEngine implements Engine {
   async runTurn(spec: TurnSpec): Promise<TurnStats> {
     const stats: TurnStats = { isError: false, errors: [] };
     try {
-      const oc = await createOpencode({ timeout: 20000 });
+      const oc = await createOpencode({ timeout: 60000 });
       const client = createOpencodeClient({ baseUrl: oc.server.url });
 
       // Create session
