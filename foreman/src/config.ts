@@ -40,8 +40,8 @@ export interface ClaudeConfig {
   leadReadCommands: string[];
 }
 
-export type EngineName = 'claude' | 'codex';
-export const ENGINE_NAMES: readonly EngineName[] = ['claude', 'codex'];
+export type EngineName = 'claude' | 'codex' | 'opencode';
+export const ENGINE_NAMES: readonly EngineName[] = ['claude', 'codex', 'opencode'];
 
 /** Codex engine (`codex app-server`): models and effort default to your Codex config. */
 export interface CodexConfig {
@@ -54,12 +54,20 @@ export interface CodexConfig {
   leadEffort?: string;
 }
 
+export interface OpenCodeConfig {
+  path?: string;
+  leadModel?: string;
+  workerModel?: string;
+}
+
 /** Which engine runs the lead, the workers, and per-agent exceptions (`--engines kit=codex`). */
-export interface EngineChoice {
+export interface EnginesConfig {
   lead: EngineName;
   worker: EngineName;
   byAgent: Record<string, EngineName>;
 }
+
+export type EngineChoice = EnginesConfig;
 
 export type ShowcaseCheckpoint = 'showcase' | 'showcase-late';
 
@@ -105,7 +113,8 @@ export interface Config {
   /** team settings (workers, CI, review, lead read commands) and the Claude engine's options */
   claude: ClaudeConfig;
   codex: CodexConfig;
-  engines: EngineChoice;
+  opencode: OpenCodeConfig;
+  engines: EnginesConfig;
   sim: SimConfig;
 }
 
@@ -208,6 +217,7 @@ export const KNOWN_FLAGS = new Set([
   'max-concurrent', 'ci', 'max-budget', 'resume', 'lead-review', 'speed', 'seed', 'showcase', 'auto-answer',
   'ambient', 'lead-read-commands', 'lead-engine', 'worker-engine', 'engines', 'codex-path', 'codex-model', 'codex-lead-model',
   'codex-worker-model', 'codex-effort', 'codex-lead-effort',
+  'opencode-path', 'opencode-model', 'opencode-lead-model', 'opencode-worker-model',
 ]);
 
 function engineName(v: unknown, d: EngineName, what: string): EngineName {
@@ -253,7 +263,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const pick = (k: string, envKey?: string): unknown => flags[k] ?? (envKey ? env[envKey] : undefined) ?? file[k];
 
   const backendRaw = String(pick('backend', 'AGENTCRAFT_BACKEND') ?? 'claude');
-  if (backendRaw !== 'sim' && backendRaw !== 'claude' && backendRaw !== 'codex') throw new Error(`unknown backend "${backendRaw}" (use sim, claude or codex)`);
+  if (backendRaw !== 'sim' && backendRaw !== 'claude' && backendRaw !== 'codex' && backendRaw !== 'opencode') throw new Error(`unknown backend "${backendRaw}" (use sim, claude, codex or opencode)`);
   const backend = backendRaw as BackendName;
   const profile = str(pick('profile', 'AGENTCRAFT_PROFILE')) ?? backend;
   if (!/^[a-zA-Z0-9_-]+$/.test(profile)) throw new Error(`bad profile name "${profile}"`);
@@ -318,9 +328,14 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
       effort: str(flags['codex-effort']) ?? str(fileCodex.effort),
       leadEffort: str(flags['codex-lead-effort']) ?? str(flags['codex-effort']) ?? str(fileCodex.leadEffort) ?? str(fileCodex.effort),
     },
+    opencode: {
+      path: str(flags['opencode-path']) ?? str(env.AGENTCRAFT_OPENCODE_PATH) ?? (file as any).opencode?.path ?? undefined,
+      leadModel: str(flags['opencode-lead-model']) ?? str(flags['opencode-model']) ?? (file as any).opencode?.leadModel ?? undefined,
+      workerModel: str(flags['opencode-worker-model']) ?? str(flags['opencode-model']) ?? (file as any).opencode?.workerModel ?? undefined,
+    },
     engines: {
-      lead: engineName(pick('lead-engine', 'AGENTCRAFT_LEAD_ENGINE') ?? (file.engines as Record<string, unknown> | undefined)?.lead, backend === 'codex' ? 'codex' : 'claude', 'lead engine'),
-      worker: engineName(pick('worker-engine', 'AGENTCRAFT_WORKER_ENGINE') ?? (file.engines as Record<string, unknown> | undefined)?.worker, backend === 'codex' ? 'codex' : 'claude', 'worker engine'),
+      lead: engineName(pick('lead-engine', 'AGENTCRAFT_LEAD_ENGINE') ?? (file.engines as Record<string, unknown> | undefined)?.lead, backend === 'codex' ? 'codex' : backend === 'opencode' ? 'opencode' : 'claude', 'lead engine'),
+      worker: engineName(pick('worker-engine', 'AGENTCRAFT_WORKER_ENGINE') ?? (file.engines as Record<string, unknown> | undefined)?.worker, backend === 'codex' ? 'codex' : backend === 'opencode' ? 'opencode' : 'claude', 'worker engine'),
       byAgent: engineMap(flags.engines ?? env.AGENTCRAFT_ENGINES ?? (file.engines as Record<string, unknown> | undefined)?.byAgent),
     },
     sim: {
@@ -340,7 +355,7 @@ export const HELP = `AgentCraft Foreman ${FOREMAN_VERSION}
 
 usage: npm run start -- [options]
 
-  --backend sim|claude|codex  agent backend (default: claude; codex = an all-Codex team)
+  --backend sim|claude|codex|opencode  agent backend (default: claude; codex = all-Codex; opencode = all-OpenCode)
   --repo <path>[,<path>]   register local git repo(s) at start (sim: defaults to a fresh sandbox/sim-demo)
   --goal "<text>"          submit a goal right away
   --port <n>               WebSocket port (default 7878, env AGENTCRAFT_PORT)
@@ -387,7 +402,7 @@ usage: npm run start -- [options]
 
  codex engine (--backend codex, or mixed teams)
   auth: your Codex login (\`codex login\`: ChatGPT or an OpenAI API key)
-  --lead-engine claude|codex / --worker-engine claude|codex
+  --lead-engine claude|codex|opencode / --worker-engine claude|codex|opencode
                            mix engines (default: the backend's), e.g. a Claude lead with Codex workers
   --engines <agent=engine,...>  per agent, e.g. kit=codex,wren=claude (env AGENTCRAFT_ENGINES)
   --codex-path <path>      the codex CLI (default: on PATH, else the Codex desktop app's)
@@ -396,4 +411,10 @@ usage: npm run start -- [options]
   --codex-effort <e>       reasoning effort (low|medium|high|xhigh...; default: your Codex config's)
   Codex agents get none of your own MCP servers, plugins, web search or apps; every command and
   out-of-worktree edit goes through the same policy and in-game permission prompts.
+
+ opencode engine (--backend opencode)
+  auth: OpenCode login/config as used by \`opencode\`
+  --opencode-path <path>   the opencode CLI (default: on PATH)
+  --opencode-model <m>      model for OpenCode agents (provider/model format)
+  --opencode-lead-model <m> / --opencode-worker-model <m>
 `;
